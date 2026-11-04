@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phishing Guard</title>
+<style>
+  :root{--bg:#f6f7f9;--card:#fff;--text:#1a1d21;--muted:#6b7280;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--accent:#2563eb;--border:#e5e7eb}
+  @media (prefers-color-scheme:dark){:root{--bg:#111418;--card:#1a1e24;--text:#eceff3;--muted:#9aa3af;--border:#2a303a;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--accent:#60a5fa}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,sans-serif;padding:16px}
+  main{max-width:640px;margin:0 auto}
+  h1{font-size:22px;margin:8px 0 4px}
+  p.sub{color:var(--muted);margin:0 0 16px}
+  .tabs{display:flex;gap:8px;margin-bottom:12px}
+  .tabs button{flex:1;padding:10px;border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:10px;font-size:15px}
+  .tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:12px}
+  input,textarea{width:100%;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text);font:inherit}
+  textarea{min-height:130px;resize:vertical}
+  .go{width:100%;margin-top:10px;padding:12px;border:0;border-radius:10px;background:var(--accent);color:#fff;font-size:16px;font-weight:600}
+  .verdict{font-size:20px;font-weight:700;margin:0 0 4px}
+  .bar{height:10px;border-radius:6px;background:var(--border);overflow:hidden;margin:8px 0 12px}
+  .bar i{display:block;height:100%;width:0;transition:width .4s}
+  ul{padding-left:20px;margin:6px 0}
+  li{margin:4px 0}
+  .hide{display:none}
+  small{color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <h1>🛡️ Phishing Guard</h1>
+  <p class="sub">Check a link or a message before you tap it.</p>
+
+  <div class="tabs">
+    <button id="t1" class="on">Link (URL)</button>
+    <button id="t2">Message (SMS/Email)</button>
+  </div>
+
+  <div class="card" id="p1">
+    <input id="url" type="text" inputmode="url" placeholder="https://example.com/login" autocapitalize="off" autocorrect="off">
+    <button class="go" id="b1">Check link</button>
+  </div>
+
+  <div class="card hide" id="p2">
+    <textarea id="msg" placeholder="Paste the message here (SMS, email, WhatsApp)..."></textarea>
+    <button class="go" id="b2">Check message</button>
+  </div>
+
+  <div class="card hide" id="res">
+    <p class="verdict" id="verdict"></p>
+    <div class="bar"><i id="fill"></i></div>
+    <ul id="reasons"></ul>
+  </div>
+
+  <small>This is a heuristic check, not a guarantee. If you're unsure, don't open the link and don't share any information. Contact the company directly through its official app or website.</small>
+</main>
+
+<script>
+const BRANDS = ["paypal","google","facebook","instagram","apple","microsoft","amazon","netflix","whatsapp","binance","poste","stb","biat","attijari","amen","zitouna","bh","bnatunisie","orange","ooredoo","topnet","dhl","fedex","visa","mastercard","outlook","linkedin","twitter","tiktok"];
+const OFFICIAL = {paypal:["paypal.com"],google:["google.com","google.tn"],facebook:["facebook.com"],instagram:["instagram.com"],apple:["apple.com","icloud.com"],microsoft:["microsoft.com","live.com","outlook.com"],amazon:["amazon.com"],netflix:["netflix.com"],whatsapp:["whatsapp.com"],binance:["binance.com"],poste:["poste.tn"],orange:["orange.tn","orange.com"],ooredoo:["ooredoo.tn"],topnet:["topnet.tn"],dhl:["dhl.com"],fedex:["fedex.com"],visa:["visa.com"],mastercard:["mastercard.com"],outlook:["outlook.com"],linkedin:["linkedin.com"],twitter:["twitter.com","x.com"],tiktok:["tiktok.com"]};
+const SHORTENERS = ["bit.ly","tinyurl.com","t.co","goo.gl","ow.ly","is.gd","cutt.ly","rb.gy","shorturl.at"];
+const BAD_TLDS = ["xyz","top","click","link","icu","buzz","tk","ml","ga","cf","gq","work","support","rest","cam","monster"];
+const WORDS = ["login","signin","verify","verification","secure","account","update","confirm","banking","password","wallet","suspend","unlock","billing","payment","invoice"];
+
+// Scam phrases the checker looks for. English first; French, Arabic and Tunisian
+// Arabizi are kept so messages in those languages are still detected.
+const URGENT = [
+  "urgent","immediately","within 24","account blocked","account suspended","account locked","verify your account","confirm your identity","click here","click the link","password","verification code","otp","you won","you have won","congratulations","winner","parcel","package","delivery","customs fee","refund","final notice","last warning","act now",
+  "immédiatement","dans les 24","compte bloqué","compte suspendu","vérifiez votre compte","cliquez ici","mot de passe","code de vérification","gagné","félicitations","colis","livraison","frais de douane","remboursement","dernier avertissement",
+  "عاجل","حسابك","تم تعليق","اضغط هنا","ربحت","مبروك","كلمة السر","كلمة المرور","tawa","ta3tel","compte mta3ek","mta3ek mab3outh"
+];
+
+function lev(a,b){const m=[];for(let i=0;i<=a.length;i++){m[i]=[i]}for(let j=0;j<=b.length;j++){m[0][j]=j}
+  for(let i=1;i<=a.length;i++)for(let j=1;j<=b.length;j++)m[i][j]=Math.min(m[i-1][j]+1,m[i][j-1]+1,m[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
+  return m[a.length][b.length]}
+function deleet(s){return s.replace(/0/g,"o").replace(/1/g,"l").replace(/3/g,"e").replace(/5/g,"s").replace(/\$/g,"s").replace(/rn/g,"m").replace(/vv/g,"w")}
+
+function analyzeURL(raw){
+  let r=[],score=0;
+  raw=raw.trim();
+  if(!raw) return null;
+  let u;
+  try{u=new URL(/^[a-z]+:\/\//i.test(raw)?raw:"http://"+raw)}catch(e){return {score:60,reasons:["⚠️ This is not a valid link."]}}
+  const host=u.hostname.toLowerCase();
+  const parts=host.split(".");
+  const base=parts.slice(-2).join(".");
+  const label=parts.length>1?parts[parts.length-2]:parts[0];
+  const tld=parts[parts.length-1];
+
+  if(u.protocol!=="https:"){score+=15;r.push("Not HTTPS (the connection is not encrypted).")}
+  if(/^\d{1,3}(\.\d{1,3}){3}$/.test(host)){score+=35;r.push("Uses an IP address instead of a domain name.")}
+  if(raw.includes("@")){score+=30;r.push("Contains '@', which can hide the real destination.")}
+  if(host.startsWith("xn--")||host.includes(".xn--")||/[^\x00-\x7F]/.test(host)){score+=35;r.push("Special characters/punycode (may be a look-alike of a real domain).")}
+  if(parts.length>=5){score+=20;r.push("Too many subdomains ("+parts.length+" levels).")}
+  else if(parts.length===4){score+=8;r.push("Extra subdomains.")}
+  if((host.match(/-/g)||[]).length>=3){score+=15;r.push("Many hyphens in the domain.")}
+  if(BAD_TLDS.includes(tld)){score+=15;r.push("The '."+tld+"' extension is often used in phishing.")}
+  if(SHORTENERS.includes(host)){score+=25;r.push("Shortened link: you can't see where it leads.")}
+  if(raw.length>100){score+=10;r.push("Very long link.")}
+  if(u.port&&!["80","443"].includes(u.port)){score+=10;r.push("Unusual port ("+u.port+").")}
+
+  const hits=WORDS.filter(w=>(host+u.pathname).toLowerCase().includes(w));
+  if(hits.length){score+=Math.min(20,hits.length*7);r.push("Sensitive keywords in the link: "+hits.slice(0,4).join(", ")+".")}
+
+  // Brand impersonation
+  const clean=deleet(label);
+  for(const b of BRANDS){
+    const official=(OFFICIAL[b]||[b+".tn",b+".com"]).includes(base);
+    if(official) continue;
+    const inHost=host.includes(b)||clean.includes(b);
+    const close=lev(clean,b)<=2&&label!==b&&b.length>=5;
+    if(inHost||close){
+      score+=40;
+      r.push("Imitates '"+b+"', but the real domain is '"+base+"'.");
+      break;
+    }
+  }
+  score=Math.min(100,score);
+  if(!r.length)r.push("No suspicious signs found in this link.");
+  return {score,reasons:r};
+}
+
+function analyzeMsg(text){
+  let r=[],score=0;
+  const t=text.toLowerCase();
+  if(!t.trim())return null;
+  const hits=URGENT.filter(w=>t.includes(w.toLowerCase()));
+  if(hits.length){score+=Math.min(50,hits.length*12);r.push("Urgency or pressure wording: "+[...new Set(hits)].slice(0,5).join(", ")+".")}
+  const urls=text.match(/(https?:\/\/[^\s]+|\b[a-z0-9-]+(\.[a-z0-9-]+)+\/[^\s]*)/gi)||[];
+  let worst=0;
+  urls.forEach(x=>{const a=analyzeURL(x);if(a&&a.score>worst){worst=a.score}});
+  if(urls.length){r.push(urls.length+" link(s) in the message.");score+=Math.round(worst*0.7);if(worst>=40)r.push("One of the links looks suspicious (score "+worst+"/100).")}
+  if(/(mot de passe|password|code|otp|card|carte|cvv|iban|rib|pin|كلمة)/i.test(text)){score+=15;r.push("Asks for sensitive information (password, code, card...).")}
+  score=Math.min(100,score);
+  if(!r.length)r.push("No obvious signs found, but always stay careful.");
+  return {score,reasons:r};
+}
+
+function show(res){
+  if(!res)return;
+  const s=res.score;
+  const [label,color]=s>=60?["🚨 Danger: likely phishing",'var(--bad)']:s>=30?["⚠️ Suspicious: be careful",'var(--warn)']:["✅ Looks safe (stay careful)",'var(--ok)'];
+  const v=document.getElementById("verdict");v.textContent=label+" — "+s+"/100";v.style.color=color;
+  const f=document.getElementById("fill");f.style.background=color;f.style.width=s+"%";
+  const ul=document.getElementById("reasons");ul.innerHTML="";
+  res.reasons.forEach(x=>{const li=document.createElement("li");li.textContent=x;ul.appendChild(li)});
+  document.getElementById("res").classList.remove("hide");
+}
+
+const $=id=>document.getElementById(id);
+$("b1").onclick=()=>show(analyzeURL($("url").value));
+$("b2").onclick=()=>show(analyzeMsg($("msg").value));
+$("url").addEventListener("keydown",e=>{if(e.key==="Enter")$("b1").click()});
+function tab(n){$("p1").classList.toggle("hide",n!==1);$("p2").classList.toggle("hide",n!==2);$("t1").classList.toggle("on",n===1);$("t2").classList.toggle("on",n===2);$("res").classList.add("hide")}
+$("t1").onclick=()=>tab(1);$("t2").onclick=()=>tab(2);
+</script>
+</body>
+</html>
